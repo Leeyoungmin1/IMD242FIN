@@ -7,21 +7,29 @@ const container = document.body.querySelector('.container-canvas');
 // 필요에 따라 이하에 변수 생성.
 let faceMesh;
 let video;
-let classifier;
+// let classifier;
+let faces = [];
 
 const videoW = 640;
 const videoH = 480;
 
-const {
-  Engine,
-  Body,
-  Bodies,
-  Composite,
-  Composites,
-  Mouse,
-  MouseConstraint,
-  Vector,
-} = Matter;
+let haTexts = [];
+let textCreationTimer = 0;
+let textCreationDelay = 10;
+
+let inputText = '텍스트를 입력하세요';
+let userInput;
+
+// const {
+//   Engine,
+//   Body,
+//   Bodies,
+//   Composite,
+//   Composites,
+//   Mouse,
+//   MouseConstraint,
+//   Vector,
+// } = Matter;
 
 let mouthOpen = 0;
 let keyIdx = 0;
@@ -29,8 +37,15 @@ let engine, world;
 let canvas;
 let mouse, mouseConstraint;
 let mouseCenter;
-let faces = [];
-let options = { maxFaces: 1, refineLandmarks: false, flipHorizontal: false };
+// let options = { maxFaces: 1, refineLandmarks: false, flipHorizontal: true };
+
+function preload() {
+  faceMesh = ml5.faceMesh({
+    maxFaces: 1,
+    refineLandmarks: false,
+    flipHorizontal: true,
+  });
+}
 
 function calcMouthOpen(face) {
   let upper = face.keypoints[13];
@@ -49,24 +64,16 @@ function calcWidth(face) {
 function faceAD(face) {
   let leftPoint = face.keypoints[21];
   let rightPoint = face.keypoints[251];
-  let centerPoint = face.keypoints[4];
+  // let centerPoint = face.keypoints[4];
   let distance = dist(
     leftPoint.x,
     leftPoint.y,
     leftPoint.z,
     rightPoint.x,
     rightPoint.y,
-    rightPoint.z,
-    centerPoint.x,
-    centerPoint.y,
-    centerPoint.z
+    rightPoint.z
   );
   return distance;
-}
-
-function preload() {
-  // Load the faceMesh model
-  faceMesh = ml5.faceMesh(options);
 }
 
 // function videoScale() {
@@ -74,6 +81,11 @@ function preload() {
 // }
 
 function setup() {
+  // 입력 필드 생성
+  userInput = createInput('텍스트를 입력하세요');
+  userInput.position(10, 10);
+  userInput.size(200);
+  userInput.input(updateInputText);
   // 컨테이너의 현재 위치, 크기 등의 정보 가져와서 객체구조분해할당을 통해 너비, 높이 정보를 변수로 추출.
   const { width: containerW, height: containerH } =
     container.getBoundingClientRect();
@@ -98,9 +110,7 @@ function setup() {
   }
   init();
   // createCanvas를 제외한 나머지 구문을 여기 혹은 init()에 작성.
-  // createCanvas(640, 480);
-  video = createCapture(VIDEO);
-  // video = createCapture(VIDEO);
+  video = createCapture(VIDEO, { flipped: true });
   video.size(videoW, videoH);
   video.hide();
   faceMesh.detectStart(video, gotFaces);
@@ -109,12 +119,27 @@ function setup() {
 // windowResized()에서 setup()에 준하는 구문을 실행해야할 경우를 대비해 init이라는 명칭의 함수를 만들어 둠.
 function init() {}
 
+function updateInputText() {
+  inputText = this.value();
+}
+
 function draw() {
   // background('white');
   // circle(mouseX, mouseY, 50);
   image(video, 0, 0, width, height);
   const scaleX = width / videoW;
   const scaleY = height / videoH;
+
+  // 무지개 색상 정의
+  const colors = [
+    color(148, 0, 211), // 보라
+    color(75, 0, 200), // 남색
+    color(0, 0, 255), // 파랑
+    color(0, 255, 0), // 초록
+    color(230, 230, 0), // 노랑
+    color(240, 165, 0), // 주황
+    color(255, 0, 0), // 빨강
+  ];
   // image(
   //   video,
   //   0,
@@ -132,24 +157,91 @@ function draw() {
   // Draw all the tracked face points
   for (let i = 0; i < faces.length; i++) {
     let face = faces[i];
-    for (let j = 0; j < face.keypoints.length; j++) {
-      let keypoint = face.keypoints[j];
-      const x = keypoint.x * scaleX;
-      const y = keypoint.y * scaleY;
-      fill(0, 255, 0);
-      noStroke();
-      circle(x, y, 5);
-    }
-
     let mouthDist = calcMouthOpen(face);
-    // console.log(mouthDist);
 
-    // let normalMouth = mouthDist / faceWidth;
-    // console.log('정규화된 입', normalMouth);
+    if (mouthDist > 10 && textCreationTimer >= textCreationDelay) {
+      let faceDir = calcFaceDirection(face);
+      let mouthCenter = face.keypoints[13];
 
-    // let fWeight = map(normalMouth, 0, 0.33, 100, 900);
-    // document.documentElement.style.setProperty('--fWeight', fWeight);
+      // 텍스트 크기 계산
+      let minSize = 20;
+      let maxSize = 100;
+      let textSizeValue = map(mouthDist, 10, 50, minSize, maxSize, true);
+
+      // 텍스트 색상 계산
+      let colorIndex = floor(
+        map(mouthDist, 10, 50, 0, colors.length - 1, true)
+      );
+
+      haTexts.push({
+        x: mouthCenter.x * scaleX,
+        y: mouthCenter.y * scaleY,
+        dx: faceDir.x * 5,
+        dy: faceDir.y * -5,
+        alpha: 255,
+        text: inputText,
+        textSize: textSizeValue,
+        textColor: colors[colorIndex], // 동적 색상 추가
+      });
+
+      textCreationTimer = 0;
+    }
   }
+
+  for (let i = haTexts.length - 1; i >= 0; i--) {
+    let ha = haTexts[i];
+    ha.x += ha.dx;
+    ha.y += ha.dy;
+    ha.alpha -= 2;
+
+    // 색상과 크기 적용
+    fill(red(ha.textColor), green(ha.textColor), blue(ha.textColor), ha.alpha);
+    textSize(ha.textSize);
+    textAlign(CENTER, CENTER);
+    text(ha.text, ha.x, ha.y);
+
+    if (ha.alpha <= 0) haTexts.splice(i, 1);
+  }
+  textCreationTimer++;
+
+  // for (let j = 0; j < face.keypoints.length; j++) {
+  //   let keypoint = face.keypoints[j];
+  //   const x = keypoint.x * scaleX;
+  //   const y = keypoint.y * scaleY;
+  //   fill(0, 255, 0);
+  //   noStroke();
+  //   circle(x, y, 5);
+  // }
+
+  // console.log(mouthDist);
+
+  // let normalMouth = mouthDist / faceWidth;
+  // console.log('정규화된 입', normalMouth);
+
+  // let fWeight = map(normalMouth, 0, 0.33, 100, 900);
+  // document.documentElement.style.setProperty('--fWeight', fWeight);
+}
+
+function calcMouthOpen(face) {
+  let upper = face.keypoints[13];
+  let lower = face.keypoints[14];
+  return dist(upper.x, upper.y, lower.x, lower.y);
+}
+
+function calcFaceDirection(face) {
+  let leftTemple = face.keypoints[21];
+  let rightTemple = face.keypoints[251];
+  let noseTip = face.keypoints[4];
+
+  let midPoint = {
+    x: (leftTemple.x + rightTemple.x) / 2,
+    y: (leftTemple.y + rightTemple.y) / 2,
+  };
+
+  let dx = noseTip.x - midPoint.x;
+  let dy = noseTip.y - midPoint.y;
+
+  return createVector(dx, dy).normalize();
 }
 
 // Callback function for when faceMesh outputs data
